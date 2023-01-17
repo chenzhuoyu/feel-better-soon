@@ -7,7 +7,7 @@
 #define UART_BAUD   2000000
 #define SERVER_PORT 9999
 
-static const char * StatusTab[] PROGMEM = {
+static const char * StatusTab[] = {
     "IDLE",
     "NO_SSID_AVAIL",
     "SCAN_COMPLETED",

@@ -5,7 +5,7 @@ struct MethodName {
     HttpMethod       method;
 };
 
-static const MethodName Methods[] PROGMEM = {
+static const MethodName Methods[] = {
     { "GET"    , HttpMethod::GET    },
     { "PUT"    , HttpMethod::PUT    },
     { "POST"   , HttpMethod::POST   },
@@ -152,7 +152,7 @@ void HttpServer::state_read_headers() {
 
     /* parse the method */
     for (const auto &v : Methods) {
-        if (v.name.size() == method_len && !strncmp_P(v.name.data(), method, method_len)) {
+        if (v.name.size() == method_len && !strncmp(v.name.data(), method, method_len)) {
             valid = true;
             _req.method = v.method;
             break;

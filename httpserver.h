@@ -94,7 +94,7 @@ private:
 
 private:
     char       _buffer[4096] = {};
-    phr_header _headers[128] = {};
+    phr_header _headers[32]  = {};
 
 private:
     HttpRequest  _req        = {};
