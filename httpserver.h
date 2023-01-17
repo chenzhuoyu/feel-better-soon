@@ -1,16 +1,11 @@
 #ifndef __HTTPSERVER_H__
 #define __HTTPSERVER_H__
 
-#include <functional>
 #include <string_view>
+#include <unordered_map>
 #include <ESP8266WiFi.h>
 
 #include "picohttpparser.h"
-
-struct HttpHeader {
-    std::string_view name;
-    std::string_view value;
-};
 
 enum class HttpMethod : uint8_t {
     GET,
@@ -20,10 +15,16 @@ enum class HttpMethod : uint8_t {
     DELETE,
 };
 
+struct HttpHeader {
+    std::string_view name;
+    std::string_view value;
+};
+
 struct HttpRequest {
     HttpMethod              method;
     std::string_view        path;
     std::string_view        body;
+    std::string_view        query;
     std::vector<HttpHeader> headers;
 };
 
@@ -58,8 +59,8 @@ public:
     HttpResponse(const char *buf, size_t len) : HttpResponse(buf, len, false) {}
 
 public:
-    static HttpResponse create(const char *buf)             { return create(buf, slen(buf)); }
-    static HttpResponse create(const char *buf, size_t len) { return HttpResponse(buf, len, true); }
+    static HttpResponse take(const char *buf)             { return take(buf, slen(buf)); }
+    static HttpResponse take(const char *buf, size_t len) { return HttpResponse(buf, len, true); }
 
 public:
     void swap(HttpResponse &other) {
@@ -78,6 +79,12 @@ private:
     }
 };
 
+struct HttpRoutingTable {
+    HttpMethod     method;
+    char           path[256];
+    HttpResponse (*handler)(const HttpRequest &);
+};
+
 class HttpServer {
     enum class State {
         Idle,
@@ -93,26 +100,27 @@ private:
     WiFiClient _conn;
 
 private:
+    State  _state      = State::Idle;
+    size_t _last_len   = 0;
+    size_t _read_len   = 0;
+    size_t _header_len = 0;
+
+private:
     char       _buffer[4096] = {};
     phr_header _headers[32]  = {};
 
 private:
-    HttpRequest  _req        = {};
-    HttpResponse _resp       = nullptr;
-    State        _state      = State::Idle;
-    size_t       _last_len   = 0;
-    size_t       _read_len   = 0;
-    size_t       _header_len = 0;
+    HttpRequest              _req    = {};
+    HttpResponse             _resp   = nullptr;
+    const HttpRoutingTable * _routes = nullptr;
 
 public:
-    using Handler = std::function<std::string_view(HttpRequest &)>;
-    explicit HttpServer(uint16_t port);
+    explicit HttpServer(uint16_t port, const HttpRoutingTable *routes);
 
 public:
     void poll();
     void begin();
     void close();
-    void route(const char *method, const char *path, Handler &&handler);
 
 private:
     bool accept(WiFiClient conn);

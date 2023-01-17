@@ -1,11 +1,12 @@
+#include "progmem.h"
 #include "httpserver.h"
 
 struct MethodName {
-    std::string_view name;
-    HttpMethod       method;
+    char       name[8];
+    HttpMethod method;
 };
 
-static const MethodName Methods[] = {
+static const MethodName Methods[] PROGMEM = {
     { "GET"    , HttpMethod::GET    },
     { "PUT"    , HttpMethod::PUT    },
     { "POST"   , HttpMethod::POST   },
@@ -13,7 +14,49 @@ static const MethodName Methods[] = {
     { "DELETE" , HttpMethod::DELETE },
 };
 
-HttpServer::HttpServer(uint16_t port) : _srv(port) {
+static const char *HTTP_400_BAD_REQUEST PROGMEM =
+    "HTTP/1.1 400 Bad Request\r\n"
+    "Content-Length: 12\r\n"
+    "Content-Type: text/plain\r\n"
+    "\r\n"
+    "bad request\n";
+
+static const char *HTTP_404_NOT_FOUND PROGMEM =
+    "HTTP/1.1 404 Not Found\r\n"
+    "Content-Length: 10\r\n"
+    "Content-Type: text/plain\r\n"
+    "\r\n"
+    "not found\n";
+
+static const char *HTTP_405_METHOD_NOT_ALLOWED PROGMEM =
+    "HTTP/1.1 405 Method Not Allowed\r\n"
+    "Content-Length: 19\r\n"
+    "Content-Type: text/plain\r\n"
+    "\r\n"
+    "method not allowed\n";
+
+static const char *HTTP_413_PAYLOAD_TOO_LARGE PROGMEM =
+    "HTTP/1.1 413 Payload Too Large\r\n"
+    "Content-Length: 18\r\n"
+    "Content-Type: text/plain\r\n"
+    "\r\n"
+    "payload too large\n";
+
+static const char *HTTP_500_INTERNAL_SERVER_ERROR PROGMEM =
+    "HTTP/1.1 500 Internal Server Error\r\n"
+    "Content-Length: 22\r\n"
+    "Content-Type: text/plain\r\n"
+    "\r\n"
+    "internal server error\n";
+
+static const char *HTTP_501_NOT_IMPLEMENTED PROGMEM =
+    "HTTP/1.1 501 Not Implemented\r\n"
+    "Content-Length: 16\r\n"
+    "Content-Type: text/plain\r\n"
+    "\r\n"
+    "not implemented\n";
+
+HttpServer::HttpServer(uint16_t port, const HttpRoutingTable *routes) : _srv(port), _routes(routes) {
     _req.headers.reserve(sizeof(_headers) / sizeof(_headers[0]));
 }
 
@@ -47,10 +90,6 @@ void HttpServer::close() {
     _srv.close();
 }
 
-void HttpServer::route(const char *method, const char *path, Handler &&handler) {
-
-}
-
 bool HttpServer::accept(WiFiClient conn) {
     if (_state != State::Idle) {
         conn.stop();
@@ -77,16 +116,20 @@ void HttpServer::state_finished() {
 }
 
 void HttpServer::state_read_headers() {
+    bool         ok           = false;
+    int          pos          = -1;
     const char * path         = nullptr;
+    const char * delim        = nullptr;
     const char * method       = nullptr;
     int          subver       = 0;
+    char *       end_ptr      = nullptr;
     size_t       path_len     = 0;
     size_t       method_len   = 0;
     size_t       header_count = sizeof(_headers) / sizeof(_headers[0]);
 
     /* check for buffer size */
     if (_read_len >= sizeof(_buffer)) {
-        respond("HTTP/1.1 413 Payload Too Large\r\nContent-Length: 18\r\n\r\npayload too large\n");
+        respond(HTTP_413_PAYLOAD_TOO_LARGE);
         return;
     }
 
@@ -124,60 +167,76 @@ void HttpServer::state_read_headers() {
 
     /* check for header errors */
     if (_header_len == -1) {
-        respond("HTTP/1.1 400 Bad Request\r\nContent-Length: 12\r\n\r\nparse error\n");
+        respond(HTTP_400_BAD_REQUEST);
         return;
     }
 
     /* check for unknown errors */
     if (_header_len <= 0) {
-        respond("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 22\r\n\r\ninternal server error\n");
+        respond(HTTP_500_INTERNAL_SERVER_ERROR);
         return;
     }
 
     /* HTTP/1.1 only */
     if (subver != 1) {
-        respond("HTTP/1.1 400 Bad Request\r\nContent-Length: 16\r\n\r\ninvalid version\n");
+        respond(HTTP_400_BAD_REQUEST);
         return;
     }
 
-    /* various flags */
-    int    pos     = -1;
-    bool   valid   = false;
-    char * end_ptr = nullptr;
-
-    /* update request fields */
+    /* clear body and header buffer */
     _req.body = "";
-    _req.path = std::string_view(path, path_len);
     _req.headers.clear();
+
+    /* split the query string */
+    if ((delim = strchr(path, '?')) == nullptr) {
+        _req.path  = std::string_view(path, path_len);
+        _req.query = "";
+    } else {
+        _req.path  = std::string_view(path, delim - path);
+        _req.query = std::string_view(delim + 1, path_len - (delim - path) - 1);
+    }
 
     /* parse the method */
     for (const auto &v : Methods) {
-        if (v.name.size() == method_len && !strncmp(v.name.data(), method, method_len)) {
-            valid = true;
-            _req.method = v.method;
+        if (!strncmp_P(method, v.name, method_len) && !pgm_read_byte(&v.name[method_len])) {
+            ok = true;
+            _req.method = static_cast<HttpMethod>(pgm_read_byte(&v.method));
             break;
         }
     }
 
     /* check for methods */
-    if (!valid) {
-        respond("HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 19\r\n\r\nmethod not allowed\n");
+    if (!ok) {
+        respond(HTTP_405_METHOD_NOT_ALLOWED);
         return;
     }
 
     /* build headers */
     for (int i = 0; i < header_count; i++) {
+        auto name = _headers[i].name;
+        auto nlen = _headers[i].name_len;
+
+        /* add to header buffer */
         _req.headers.emplace_back(HttpHeader {
-            name  : std::string_view(_headers[i].name, _headers[i].name_len),
+            name  : std::string_view(name, nlen),
             value : std::string_view(_headers[i].value, _headers[i].value_len),
         });
-    }
 
-    /* find the "content-length" header */
-    for (int i = 0; i < header_count; i++) {
-        if (!strncasecmp(_headers[i].name, "content-length", _headers[i].name_len)) {
-            pos = i;
-            break;
+        /* find the "Content-Length" header */
+        if (!strncasecmp(name, "content-length", nlen)) {
+            if (pos == -1) {
+                pos = i;
+                continue;
+            } else {
+                respond(HTTP_400_BAD_REQUEST);
+                return;
+            }
+        }
+
+        /* "Transfer-Encoding" is not supported */
+        if (!strncasecmp(name, "transfer-encoding", nlen)) {
+            respond(HTTP_501_NOT_IMPLEMENTED);
+            return;
         }
     }
 
@@ -193,13 +252,13 @@ void HttpServer::state_read_headers() {
 
     /* check for errors */
     if (end_ptr - _headers[pos].value != _headers[pos].value_len) {
-        respond("HTTP/1.1 400 Bad Request\r\nContent-Length: 23\r\n\r\ninvalid Content-Length\n");
+        respond(HTTP_400_BAD_REQUEST);
         return;
     }
 
     /* check for payload size */
     if (_header_len + body_len > sizeof(_buffer)) {
-        respond("HTTP/1.1 413 Payload Too Large\r\nContent-Length: 18\r\n\r\npayload too large\n");
+        respond(HTTP_413_PAYLOAD_TOO_LARGE);
         return;
     }
 
@@ -250,14 +309,42 @@ void HttpServer::state_write_response() {
 }
 
 void HttpServer::state_handle_request() {
-    printf("request body is %d bytes long\n", _req.body.size());
-    printf("method is %d\n", _req.method);
-    printf("path is %.*s\n", _req.path.size(), _req.path.data());
-    printf("headers:\n");
-    for (int i = 0; i != _req.headers.size(); i++) {
-        printf("%.*s: %.*s\n", _req.headers[i].name.size(), _req.headers[i].name.data(),
-            _req.headers[i].value.size(), _req.headers[i].value.data());
+    bool mx   = false;
+    auto rt   = _routes;
+    auto path = _req.path.data();
+    auto size = _req.path.size();
+
+    /* find the handler */
+    for (;;) {
+        auto v0 = pgm_read_byte(rt->path);
+        auto mt = pgm_typed_byte(&rt->method);
+
+        /* not found */
+        if (v0 == 0) {
+            break;
+        }
+
+        /* compare request path */
+        if (strncmp_P(path, rt->path, size) || pgm_read_byte(&rt->path[size])) {
+            rt++;
+            continue;
+        }
+
+        /* found the handler */
+        if (mt == _req.method) {
+            respond(pgm_typed_ptr(&rt->handler)(_req));
+            return;
+        }
+
+        /* move to next entry */
+        rt++;
+        mx = true;
     }
-    printf("body: %.*s\n", _req.body.size(), _req.body.data());
-    respond("HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nhello, world\n");
+
+    /* check if path exists */
+    if (!mx) {
+        respond(HTTP_404_NOT_FOUND);
+    } else {
+        respond(HTTP_405_METHOD_NOT_ALLOWED);
+    }
 }

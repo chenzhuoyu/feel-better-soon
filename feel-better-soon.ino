@@ -7,7 +7,9 @@
 #define UART_BAUD   2000000
 #define SERVER_PORT 9999
 
-static const char * StatusTab[] = {
+static HttpResponse http_query_led(const HttpRequest &req);
+
+static const char StatusTab[][16] PROGMEM = {
     "IDLE",
     "NO_SSID_AVAIL",
     "SCAN_COMPLETED",
@@ -18,9 +20,28 @@ static const char * StatusTab[] = {
     "DISCONNECTED",
 };
 
+static const HttpRoutingTable HttpRoutes[] PROGMEM = {
+    { HttpMethod::GET, "/led", http_query_led },
+    {},
+};
+
 static uint32_t    _blink  = 0;
-static HttpServer  _server = HttpServer(SERVER_PORT);
+static HttpServer  _server = HttpServer(SERVER_PORT, HttpRoutes);
 static wl_status_t _status = WL_IDLE_STATUS;
+
+static HttpResponse http_query_led(const HttpRequest &req) {
+    printf("request body is %d bytes long\n", req.body.size());
+    printf("method is %d\n", req.method);
+    printf("path is %.*s\n", req.path.size(), req.path.data());
+    printf("query is %.*s\n", req.query.size(), req.query.data());
+    printf("headers:\n");
+    for (int i = 0; i != req.headers.size(); i++) {
+        printf("%.*s: %.*s\n", req.headers[i].name.size(), req.headers[i].name.data(),
+            req.headers[i].value.size(), req.headers[i].value.data());
+    }
+    printf("body: %.*s\n", req.body.size(), req.body.data());
+    return "HTTP/1.1 200 OK\r\n\r\n";
+}
 
 static void on_status_changed(wl_status_t status) {
     switch (status) {
