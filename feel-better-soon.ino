@@ -1,13 +1,14 @@
 #include <ESP8266WiFi.h>
+
+#include "iomux.h"
 #include "httpserver.h"
+#include "pages.h"
 
 #define AP_SSID     "Oxygen-IoT"
 #define AP_PASSWD   "MagicBox-2016"
 
 #define UART_BAUD   2000000
 #define SERVER_PORT 9999
-
-static HttpResponse http_query_led(const HttpRequest &req);
 
 static const char StatusTab[][16] PROGMEM = {
     "IDLE",
@@ -20,8 +21,10 @@ static const char StatusTab[][16] PROGMEM = {
     "DISCONNECTED",
 };
 
+static HttpResponse http_GET_root(const HttpRequest &req);
+
 static const HttpRoutingTable HttpRoutes[] PROGMEM = {
-    { HttpMethod::GET, "/led", http_query_led },
+    { HttpMethod::GET, "/", http_GET_root },
     {},
 };
 
@@ -29,7 +32,7 @@ static uint32_t    _blink  = 0;
 static HttpServer  _server = HttpServer(SERVER_PORT, HttpRoutes);
 static wl_status_t _status = WL_IDLE_STATUS;
 
-static HttpResponse http_query_led(const HttpRequest &req) {
+static HttpResponse http_GET_root(const HttpRequest &req) {
     printf("request body is %d bytes long\n", req.body.size());
     printf("method is %d\n", req.method);
     printf("path is %.*s\n", req.path.size(), req.path.data());
@@ -40,7 +43,7 @@ static HttpResponse http_query_led(const HttpRequest &req) {
             req.headers[i].value.size(), req.headers[i].value.data());
     }
     printf("body: %.*s\n", req.body.size(), req.body.data());
-    return "HTTP/1.1 200 OK\r\n\r\n";
+    return HttpResponse(DATA_index_html, SIZE_index_html);
 }
 
 static void on_status_changed(wl_status_t status) {
@@ -81,6 +84,11 @@ void setup() {
     Serial.println();
     Serial.println("Device is starting ...");
     Serial.flush();
+
+    /* initialize the I/O multiplexer */
+    iomux_init();
+    iomux_io_dir(0xff);
+    iomux_io_write(0x00);
 
     /* initialize the LCD screen */
     // st7789_init();

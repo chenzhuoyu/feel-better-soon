@@ -7,7 +7,7 @@
 
 #include "picohttpparser.h"
 
-enum class HttpMethod : uint8_t {
+enum class HttpMethod : byte {
     GET,
     PUT,
     POST,
@@ -57,6 +57,7 @@ public:
 public:
     HttpResponse(const char *buf)             : HttpResponse(buf, slen(buf)) {}
     HttpResponse(const char *buf, size_t len) : HttpResponse(buf, len, false) {}
+    HttpResponse(const byte *buf, size_t len) : HttpResponse(reinterpret_cast<const char *>(buf), len) {}
 
 public:
     static HttpResponse take(const char *buf)             { return take(buf, slen(buf)); }

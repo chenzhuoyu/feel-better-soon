@@ -291,16 +291,21 @@ void HttpServer::state_read_payload() {
 }
 
 void HttpServer::state_write_response() {
-    size_t nb;
+    size_t nb = 0;
     size_t rem = _resp.len;
 
     /* send the response if any */
     if (rem != 0) {
-        if ((nb = _conn.write(_resp.buf, rem)) != 0) {
-            _resp.buf += nb;
-            _resp.len -= nb;
+        if (_resp.owned) {
+            nb = _conn.write(_resp.buf, rem);
+        } else {
+            nb = _conn.write_P(_resp.buf, rem);
         }
     }
+
+    /* consume the sent bytes */
+    _resp.buf += nb;
+    _resp.len -= nb;
 
     /* no more data remains */
     if (_resp.len == 0) {
